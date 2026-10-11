@@ -1,0 +1,7 @@
+blender/*.blend
+blender/*.blend1
+blender/build_log*.txt
+blender/*_log.txt
+node_modules/
+cloudflared
+shoe-core.js

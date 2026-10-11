@@ -36,7 +36,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1512;font-family:
 <div id="app"></div>
 <div id="hud">
   <div class="top-bar">
-    <div class="brand"><h1>焦糖毛毛拖</h1><p>Caramel Shearling Clog</p></div>
+    <div class="brand"><h1>焦糖毛毛拖</h1><p>Caramel Shearling Clog · Blender</p></div>
     <div class="controls">
       <button class="btn on" id="btnAuto" type="button">自动旋转</button>
       <button class="btn on" id="btnSpot" type="button">柔光灯</button>
@@ -45,357 +45,189 @@ html,body{width:100%;height:100%;overflow:hidden;background:#1a1512;font-family:
     </div>
   </div>
   <div class="hint" id="hint">拖动旋转 · 滚轮缩放 · 双指捏合</div>
-  <div class="badge">BTBC · STUDIO PREVIEW</div>
+  <div class="badge">BLENDER SCULPT · STUDIO PREVIEW</div>
 </div>
 <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-const TAU=Math.PI*2, deg=d=>d*Math.PI/180;
-const {clamp,lerp}=THREE.MathUtils;
-
-function noise2(x,y){const s=Math.sin(x*127.1+y*311.7)*43758.5453;return s-Math.floor(s)}
-function fbm(x,y,o=4){let v=0,a=.5,f=1;for(let i=0;i<o;i++){v+=a*noise2(x*f,y*f);f*=2;a*=.5}return v}
-function canvasTex(w,h,fn){const c=document.createElement('canvas');c.width=w;c.height=h;fn(c.getContext('2d'),w,h);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=8;return t}
-function makeSuede(){return canvasTex(512,512,(ctx,w,h)=>{
-  const img=ctx.createImageData(w,h),d=img.data;
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
-    const n=fbm(x*.02,y*.02,4)*.7+fbm(x*.07,y*.07,2)*.3;const i=(y*w+x)*4;
-    d[i]=clamp(92+n*50+(noise2(x,y)-.5)*14,0,255);
-    d[i+1]=clamp(55+n*30,0,255);d[i+2]=clamp(38+n*18,0,255);d[i+3]=255;
-  }ctx.putImageData(img,0,0);
-})}
-function makeWood(){return canvasTex(1024,512,(ctx,w,h)=>{
-  const img=ctx.createImageData(w,h),d=img.data;
-  for(let y=0;y<h;y++){const pl=Math.floor(y/64);for(let x=0;x<w;x++){
-    const g=Math.sin((x+pl*40)*.03+fbm(x*.01,y*.07)*6),n=fbm(x*.02,y*.05+pl,3),b=210+n*18+g*7,i=(y*w+x)*4;
-    let r=b,gg=b*.88,bb=b*.68;if(y%64<1.5){r*=.8;gg*=.8;bb*=.8}d[i]=r;d[i+1]=gg;d[i+2]=bb;d[i+3]=255;
-  }}ctx.putImageData(img,0,0);
-})}
-function makeFurAlpha(){return canvasTex(128,128,(ctx,w,h)=>{
-  const g=ctx.createRadialGradient(w/2,h*.55,1,w/2,h*.4,w*.5);
-  g.addColorStop(0,'#fff');g.addColorStop(.4,'rgba(255,255,255,.65)');g.addColorStop(1,'rgba(255,255,255,0)');
-  ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
-})}
-
-/**
- * KITBASH CLOG — overlapping rounded solids matching photo proportions.
- * Units: length ≈ 1.05 (heel z=-0.48 → toe z=+0.52), height ≈ 0.42, width ≈ 0.52
- * Right shoe: +X = outer side (buckle).
- */
-function createShoe(isLeft, mats){
-  const g = new THREE.Group();
-  const suede = mats.suede;
-
-  // --- SOLE ---
-  const sole = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.017, 1.04, 5, 0.07), mats.sole);
-  sole.position.set(0, 0.0085, 0.02);
-  sole.castShadow = true; sole.receiveShadow = true;
-  g.add(sole);
-
-  // --- UNIFIED LOAF BODY (heavy overlap so it reads as one clog) ---
-  // Main body loaf — wide duck-bill, chunky
-  const loaf = new THREE.Mesh(new THREE.SphereGeometry(0.28, 40, 28), suede);
-  loaf.scale.set(1.15, 0.72, 1.55);
-  loaf.position.set(0, 0.185, 0.02);
-  loaf.castShadow = true; loaf.receiveShadow = true;
-  g.add(loaf);
-
-  // Tall bread toe — flatter/wider than a ball (duck-bill)
-  const toe = new THREE.Mesh(new THREE.SphereGeometry(0.24, 36, 28), suede);
-  toe.scale.set(1.45, 0.88, 1.15);
-  toe.position.set(0, 0.215, 0.30);
-  toe.castShadow = true;
-  g.add(toe);
-
-  // Toe front blunt face
-  const toeCap = new THREE.Mesh(new THREE.SphereGeometry(0.20, 28, 20), suede);
-  toeCap.scale.set(1.35, 0.85, 0.65);
-  toeCap.position.set(0, 0.20, 0.48);
-  toeCap.castShadow = true;
-  g.add(toeCap);
-
-  // Closed heel
-  const heel = new THREE.Mesh(new THREE.SphereGeometry(0.21, 28, 20), suede);
-  heel.scale.set(1.05, 0.82, 0.85);
-  heel.position.set(0, 0.185, -0.34);
-  heel.castShadow = true;
-  g.add(heel);
-
-  // Side cheeks for width
-  for (const sx of [-1, 1]) {
-    const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.17, 24, 16), suede);
-    cheek.scale.set(0.5, 0.9, 1.7);
-    cheek.position.set(sx * 0.20, 0.175, 0.02);
-    cheek.castShadow = true;
-    g.add(cheek);
-  }
-
-  // Skirt near sole so upper meets outsole cleanly
-  const skirt = new THREE.Mesh(new RoundedBoxGeometry(0.50, 0.09, 0.98, 5, 0.09), suede);
-  skirt.position.set(0, 0.065, 0.02);
-  skirt.castShadow = true;
-  g.add(skirt);
-
-  // Cream interior (visible in opening)
-  const cavity = new THREE.Mesh(new THREE.SphereGeometry(0.20, 28, 18), mats.lining);
-  cavity.scale.set(1.15, 0.5, 1.45);
-  cavity.position.set(0, 0.24, -0.04);
-  g.add(cavity);
-
-  // Brown rim under fur
-  try {
-    const rimPts = [];
-    for (let i = 0; i <= 48; i++) {
-      const a = (i / 48) * TAU;
-      rimPts.push(new THREE.Vector3(Math.sin(a) * 0.18, 0.31 + Math.abs(Math.cos(a)) * 0.025, -0.04 + Math.cos(a) * 0.26));
-    }
-    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rimPts, true), 96, 0.022, 8, true), suede));
-  } catch (_) {}
-
-  // Center seam
-  g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0, 0.36, 0.10),
-    new THREE.Vector3(0, 0.42, 0.22),
-    new THREE.Vector3(0, 0.455, 0.34),
-    new THREE.Vector3(0, 0.42, 0.46),
-    new THREE.Vector3(0, 0.30, 0.54)
-  ]), 24, 0.005, 6, false), mats.seam));
-
-  // Vamp stitches
-  for (const ox of [0.065, 0.10]) {
-    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-      new THREE.Vector3(ox, 0.33, 0.08),
-      new THREE.Vector3(ox * 1.08, 0.40, 0.22),
-      new THREE.Vector3(ox, 0.44, 0.36)
-    ]), 14, 0.0026, 4, false), mats.stitch));
-  }
-  // Side seam
-  g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.24, 0.10, -0.08),
-    new THREE.Vector3(0.26, 0.18, 0.0),
-    new THREE.Vector3(0.22, 0.28, 0.10)
-  ]), 12, 0.0032, 4, false), mats.stitch));
-
-  // --- WIDE STRAP on OUTER SURFACE (radius clear of body) ---
-  const strapPath = [];
-  for (let i = 0; i <= 36; i++) {
-    const f = i / 36;
-    const ang = lerp(1.65, -1.35, f);
-    const z = lerp(-0.10, 0.12, Math.sin(f * Math.PI) * 0.3 + f * 0.7);
-    // sit ON the surface of the ~0.28 radius loaf
-    const rx = 0.34, ry0 = 0.08, ryAmp = 0.20;
-    strapPath.push(new THREE.Vector3(
-      Math.sin(ang) * rx,
-      ry0 + (Math.cos(ang) + 1) * ryAmp,
-      z
-    ));
-  }
-  const strapShape = new THREE.Shape();
-  const shw = 0.09;
-  strapShape.moveTo(-shw, -0.012); strapShape.lineTo(shw, -0.012);
-  strapShape.lineTo(shw, 0.012); strapShape.lineTo(-shw, 0.012); strapShape.closePath();
-  const strap = new THREE.Mesh(
-    new THREE.ExtrudeGeometry(strapShape, { steps: 64, bevelEnabled: false, extrudePath: new THREE.CatmullRomCurve3(strapPath) }),
-    mats.strap
-  );
-  strap.castShadow = true;
-  g.add(strap);
-
-  // Backup visible strap band (torus arc) so it never disappears into body
-  const strapBand = new THREE.Mesh(
-    new THREE.TorusGeometry(0.30, 0.055, 12, 48, Math.PI * 1.15),
-    mats.strap
-  );
-  strapBand.position.set(0, 0.20, 0.0);
-  strapBand.rotation.y = deg(90);
-  strapBand.rotation.z = deg(-12);
-  strapBand.castShadow = true;
-  g.add(strapBand);
-
-  // --- LARGE BRASS BUCKLE (prominent on outer flank) ---
-  const buckle = new THREE.Group();
-  buckle.add(new THREE.Mesh(new RoundedBoxGeometry(0.14, 0.105, 0.024, 3, 0.016), mats.brass));
-  const hole = new THREE.Mesh(new RoundedBoxGeometry(0.085, 0.06, 0.026, 2, 0.01), mats.brassDark);
-  hole.position.z = 0.004; buckle.add(hole);
-  const bar = new THREE.Mesh(new RoundedBoxGeometry(0.08, 0.014, 0.016, 1, 0.003), mats.brass);
-  bar.position.z = 0.012; buckle.add(bar);
-  const prong = new THREE.Mesh(new RoundedBoxGeometry(0.012, 0.07, 0.014, 1, 0.002), mats.brass);
-  prong.position.set(0.025, 0, 0.014); buckle.add(prong);
-  const tip = new THREE.Mesh(new RoundedBoxGeometry(0.10, 0.09, 0.016, 3, 0.025), mats.strap);
-  tip.position.set(0.10, -0.012, -0.01); buckle.add(tip);
-  buckle.position.set(0.34, 0.24, -0.04);
-  buckle.rotation.y = deg(-85);
-  buckle.rotation.z = deg(-2);
-  buckle.scale.set(1.15, 1.15, 1.15);
-  g.add(buckle);
-
-  // --- DENSE PLUSH SHEARLING ---
-  const furG = new THREE.Group();
-  const ball = new THREE.SphereGeometry(1, 10, 8);
-  function clump(x,y,z,sx,sy,sz,mat){
-    const m=new THREE.Mesh(ball,mat); m.position.set(x,y,z); m.scale.set(sx,sy,sz); furG.add(m);
-  }
-  // Dense collar
-  for (let i = 0; i < 70; i++) {
-    const a = (i / 70) * TAU;
-    const x = Math.sin(a) * (0.15 + Math.random() * 0.05);
-    const z = -0.04 + Math.cos(a) * (0.22 + Math.random() * 0.05);
-    const y = 0.32 + Math.abs(Math.cos(a)) * 0.035 + Math.random() * 0.025;
-    const s = 0.028 + Math.random() * 0.022;
-    clump(x, y, z, s, s * 1.15, s, i % 2 ? mats.furA : mats.furB);
-    clump(x * 0.8, y + 0.02, z, s * 0.85, s, s * 0.85, mats.furB);
-  }
-  // Front spill
-  for (let i = 0; i < 30; i++) {
-    clump((Math.random()-0.5)*0.24, 0.33+Math.random()*0.09, 0.06+Math.random()*0.16,
-      0.032+Math.random()*0.025, 0.038+Math.random()*0.025, 0.032+Math.random()*0.02, mats.furA);
-  }
-  // Interior fill
-  for (let i = 0; i < 20; i++) {
-    clump((Math.random()-0.5)*0.18, 0.20+Math.random()*0.1, -0.08+(Math.random()-0.5)*0.3,
-      0.04, 0.03, 0.04, mats.furB);
-  }
-  try {
-    const oval=[];
-    for(let i=0;i<=56;i++){
-      const a=(i/56)*TAU;
-      oval.push(new THREE.Vector3(Math.sin(a)*0.175, 0.34+Math.abs(Math.cos(a))*0.03, -0.04+Math.cos(a)*0.24));
-    }
-    const c=new THREE.CatmullRomCurve3(oval,true,'catmullrom',0.35);
-    furG.add(new THREE.Mesh(new THREE.TubeGeometry(c,160,0.036,10,true), mats.furTube));
-    furG.add(new THREE.Mesh(new THREE.TubeGeometry(c,140,0.055,10,true), mats.furTubeSoft));
-  } catch(_){}
-  // Soft fiber cards
-  const alpha = makeFurAlpha();
-  const cardMat = new THREE.MeshStandardMaterial({color:'#e8dfd2',alphaMap:alpha,transparent:true,depthWrite:false,roughness:1,side:THREE.DoubleSide});
-  for (let i = 0; i < 18; i++) {
-    const a = Math.random()*TAU;
-    const card = new THREE.Mesh(new THREE.PlaneGeometry(0.04, 0.055), cardMat);
-    card.position.set(Math.sin(a)*0.19, 0.38+Math.random()*0.06, -0.04+Math.cos(a)*0.24);
-    card.lookAt(card.position.x, card.position.y+0.2, card.position.z);
-    card.rotation.z += (Math.random()-0.5);
-    card.renderOrder = 5;
-    furG.add(card);
-  }
-  g.add(furG);
-
-  if (isLeft) {
-    const tag = new THREE.Mesh(new RoundedBoxGeometry(0.038, 0.025, 0.0015, 1, 0.002), mats.tag);
-    tag.position.set(0.1, 0.30, 0.02);
-    tag.rotation.set(deg(-8), 0, deg(18));
-    g.add(tag);
-    g.scale.x = -1;
-  }
-  return g;
-}
-
-/* ===== SCENE ===== */
-const app=document.getElementById('app');
-const loaderEl=document.getElementById('loader');
-const hud=document.getElementById('hud');
-const hint=document.getElementById('hint');
-
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setSize(innerWidth,innerHeight);
-renderer.outputColorSpace=THREE.SRGBColorSpace;
-renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.1;
-renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
-const scene=new THREE.Scene();
-scene.background=new THREE.Color('#1e1814');
-scene.fog=new THREE.FogExp2('#1e1814',0.035);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1512);
+scene.fog = new THREE.FogExp2(0x1a1512, 0.045);
 
-const camera=new THREE.PerspectiveCamera(30,innerWidth/innerHeight,0.05,40);
-// 3/4 high angle like product photos
-camera.position.set(1.9,1.35,2.2);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.05, 40);
+camera.position.set(1.35, 1.05, 1.55);
 
-const controls=new OrbitControls(camera,renderer.domElement);
-controls.enableDamping=true;controls.dampingFactor=0.06;
-controls.minDistance=1.2;controls.maxDistance=5;controls.maxPolarAngle=Math.PI*0.48;
-controls.target.set(0,0.20,0);controls.autoRotate=true;controls.autoRotateSpeed=0.4;
-controls.addEventListener('start',()=>{controls.autoRotate=false;btnAuto.classList.remove('on');hint.classList.add('fade')});
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 0.7;
+controls.maxDistance = 4.5;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.target.set(0, 0.12, 0);
+const homePos = camera.position.clone();
+const homeTarget = controls.target.clone();
 
-scene.add(new THREE.AmbientLight(0xfff2e4,0.5));
-scene.add(new THREE.HemisphereLight(0xfff6ec,0x4a3228,0.6));
-const key=new THREE.DirectionalLight(0xffecd4,1.3);
-key.position.set(2.4,5.2,2.6);key.castShadow=true;key.shadow.mapSize.set(2048,2048);
-key.shadow.camera.near=0.5;key.shadow.camera.far=16;
-key.shadow.camera.left=-3;key.shadow.camera.right=3;key.shadow.camera.top=3;key.shadow.camera.bottom=-3;
-key.shadow.bias=-0.0002;key.shadow.normalBias=0.02;scene.add(key);
-const fill=new THREE.DirectionalLight(0xd0dcff,0.4);fill.position.set(-3,2.2,-1.5);scene.add(fill);
-const rim=new THREE.DirectionalLight(0xffd8b0,0.45);rim.position.set(-1,2.8,3);scene.add(rim);
-const spot=new THREE.SpotLight(0xfff2dc,16,12,deg(30),0.5,1.1);
-spot.position.set(1.1,3.8,1.6);spot.target.position.set(0,0.2,0);spot.castShadow=true;
-scene.add(spot);scene.add(spot.target);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-const sMap=makeSuede();sMap.wrapS=sMap.wrapT=THREE.RepeatWrapping;
-const wMap=makeWood();wMap.wrapS=wMap.wrapT=THREE.RepeatWrapping;wMap.repeat.set(2.5,2.5);
+// Wood floor
+function makeWood() {
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(1024, 512), d = img.data;
+  for (let y = 0; y < 512; y++) {
+    const pl = Math.floor(y / 64);
+    for (let x = 0; x < 1024; x++) {
+      const g = Math.sin((x + pl * 40) * 0.03 + Math.sin(y * 0.02) * 2);
+      const n = Math.sin(x * 0.02 + pl) * 0.5 + 0.5;
+      let b = 210 + n * 18 + g * 8, r = b, gg = b * 0.88, bb = b * 0.68;
+      if (y % 64 < 1.5) { r *= 0.8; gg *= 0.8; bb *= 0.8; }
+      const i = (y * 1024 + x) * 4;
+      d[i] = r; d[i + 1] = gg; d[i + 2] = bb; d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 2);
+  return t;
+}
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8),
+  new THREE.MeshStandardMaterial({ map: makeWood(), roughness: 0.72, metalness: 0.02 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
 
-const mats={
-  suede:new THREE.MeshStandardMaterial({map:sMap,color:new THREE.Color('#6e4332'),roughness:0.95,metalness:0}),
-  strap:new THREE.MeshStandardMaterial({map:sMap,color:new THREE.Color('#5e3828'),roughness:0.94,metalness:0}),
-  lining:new THREE.MeshStandardMaterial({color:'#efe6d6',roughness:0.98,metalness:0,side:THREE.BackSide}),
-  furA:new THREE.MeshStandardMaterial({color:'#e8dfd0',roughness:1,metalness:0}),
-  furB:new THREE.MeshStandardMaterial({color:'#ddd4c4',roughness:1,metalness:0}),
-  furTube:new THREE.MeshStandardMaterial({color:'#e6ddd0',roughness:1,transparent:true,opacity:0.9,depthWrite:false}),
-  furTubeSoft:new THREE.MeshStandardMaterial({color:'#f0e8dc',roughness:1,transparent:true,opacity:0.28,depthWrite:false}),
-  sole:new THREE.MeshStandardMaterial({color:'#0a0a0a',roughness:0.65,metalness:0.08}),
-  brass:new THREE.MeshStandardMaterial({color:'#b89550',roughness:0.38,metalness:0.9}),
-  brassDark:new THREE.MeshStandardMaterial({color:'#5c4522',roughness:0.55,metalness:0.75}),
-  seam:new THREE.MeshStandardMaterial({color:'#5a3828',roughness:0.95}),
-  stitch:new THREE.MeshStandardMaterial({color:'#4a3020',roughness:1}),
-  tag:new THREE.MeshStandardMaterial({color:'#f5f5f0',roughness:0.7})
+// Lights
+const amb = new THREE.AmbientLight(0xfff0e0, 0.35);
+scene.add(amb);
+const hemi = new THREE.HemisphereLight(0xffe8d0, 0x3a2a22, 0.55);
+scene.add(hemi);
+const key = new THREE.SpotLight(0xffe2c4, 2.4, 12, Math.PI / 5, 0.45, 1);
+key.position.set(2.2, 3.2, 1.6); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0002;
+key.target.position.set(0, 0.1, 0); scene.add(key); scene.add(key.target);
+const fill = new THREE.DirectionalLight(0xfff5ea, 0.55);
+fill.position.set(-2.5, 2.2, -1); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffd4a8, 0.45);
+rim.position.set(0.5, 1.5, -2.5); scene.add(rim);
+const soft = new THREE.PointLight(0xffc9a0, 0.6, 6);
+soft.position.set(-0.4, 1.4, 0.8); scene.add(soft);
+
+// Dust motes
+const moteN = 180;
+const motePos = new Float32Array(moteN * 3);
+for (let i = 0; i < moteN; i++) {
+  motePos[i * 3] = (Math.random() - 0.5) * 3;
+  motePos[i * 3 + 1] = 0.2 + Math.random() * 1.6;
+  motePos[i * 3 + 2] = (Math.random() - 0.5) * 3;
+}
+const moteGeo = new THREE.BufferGeometry();
+moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
+  color: 0xffe6c8, size: 0.012, transparent: true, opacity: 0.0, depthWrite: false, sizeAttenuation: true
+}));
+scene.add(motes);
+
+let autoRotate = true, spotOn = true, motesOn = false;
+const pair = new THREE.Group();
+scene.add(pair);
+
+const loader = new GLTFLoader();
+loader.load(
+  './models/suede_clogs.glb',
+  (gltf) => {
+    const root = gltf.scene;
+    root.traverse((o) => {
+      if (o.isMesh) {
+        o.castShadow = true;
+        o.receiveShadow = true;
+        if (o.material) {
+          o.material.envMapIntensity = 0.35;
+          // deepen suede-looking materials
+          if (o.material.color && o.material.metalness < 0.5) {
+            const c = o.material.color;
+            if (c.r > 0.2 && c.r < 0.7 && c.g < c.r) {
+              c.multiplyScalar(0.72);
+              o.material.roughness = Math.max(o.material.roughness || 0.8, 0.88);
+            }
+          }
+        }
+      }
+    });
+    // Center & scale to nice view size
+    const box = new THREE.Box3().setFromObject(root);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    root.position.sub(center);
+    root.position.y += size.y * 0.5; // sit on floor
+    // lift so min Y = 0
+    const box2 = new THREE.Box3().setFromObject(root);
+    root.position.y -= box2.min.y;
+    const s = 1.35 / Math.max(size.x, size.z);
+    root.scale.setScalar(s);
+    pair.add(root);
+    document.getElementById('loader').classList.add('hide');
+    document.getElementById('hud').classList.add('show');
+    setTimeout(() => document.getElementById('hint').classList.add('fade'), 4200);
+  },
+  undefined,
+  (err) => {
+    console.error(err);
+    document.querySelector('.loader-sub').textContent = '模型加载失败，请刷新重试';
+  }
+);
+
+document.getElementById('btnAuto').onclick = (e) => {
+  autoRotate = !autoRotate; e.currentTarget.classList.toggle('on', autoRotate);
+};
+document.getElementById('btnSpot').onclick = (e) => {
+  spotOn = !spotOn; key.visible = soft.visible = spotOn; e.currentTarget.classList.toggle('on', spotOn);
+};
+document.getElementById('btnMotes').onclick = (e) => {
+  motesOn = !motesOn; motes.material.opacity = motesOn ? 0.55 : 0; e.currentTarget.classList.toggle('on', motesOn);
+};
+document.getElementById('btnReset').onclick = () => {
+  camera.position.copy(homePos); controls.target.copy(homeTarget); controls.update();
 };
 
-const floor=new THREE.Mesh(new THREE.PlaneGeometry(12,12),new THREE.MeshStandardMaterial({map:wMap,roughness:0.78,metalness:0.02}));
-floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
 
-const sc=document.createElement('canvas');sc.width=256;sc.height=256;
-{const ctx=sc.getContext('2d');const gr=ctx.createRadialGradient(128,128,8,128,128,120);
-gr.addColorStop(0,'rgba(0,0,0,.35)');gr.addColorStop(.5,'rgba(0,0,0,.1)');gr.addColorStop(1,'rgba(0,0,0,0)');
-ctx.fillStyle=gr;ctx.fillRect(0,0,256,256)}
-const sTex=new THREE.CanvasTexture(sc);
-function addShadow(x,z,sx,sz){const m=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:sTex,transparent:true,depthWrite:false,opacity:0.7}));
-m.rotation.x=-Math.PI/2;m.position.set(x,0.012,z);m.scale.set(sx,sz,1);scene.add(m)}
-
-const pair=new THREE.Group();
-const left=createShoe(true,mats);left.position.set(-0.42,0,0.06);left.rotation.y=deg(14);pair.add(left);
-const right=createShoe(false,mats);right.position.set(0.42,0,-0.04);right.rotation.y=deg(-10);pair.add(right);
-scene.add(pair);
-addShadow(-0.42,0.06,1.1,1.4);addShadow(0.42,-0.04,1.1,1.4);
-
-const MC=100;const mPos=new Float32Array(MC*3),mPh=new Float32Array(MC);
-for(let i=0;i<MC;i++){mPos[i*3]=(Math.random()-0.5)*3.5;mPos[i*3+1]=0.2+Math.random()*2;mPos[i*3+2]=(Math.random()-0.5)*3.5;mPh[i]=Math.random()*TAU}
-const mGeo=new THREE.BufferGeometry();mGeo.setAttribute('position',new THREE.BufferAttribute(mPos,3));
-const mMat=new THREE.PointsMaterial({color:0xffe6c0,size:0.014,transparent:true,opacity:0,depthWrite:false,sizeAttenuation:true,blending:THREE.AdditiveBlending});
-const motes=new THREE.Points(mGeo,mMat);scene.add(motes);let motesOn=false;
-
-const btnAuto=document.getElementById('btnAuto');
-btnAuto.onclick=()=>{controls.autoRotate=!controls.autoRotate;btnAuto.classList.toggle('on',controls.autoRotate)};
-document.getElementById('btnSpot').onclick=function(){spot.visible=!spot.visible;this.classList.toggle('on',spot.visible)};
-document.getElementById('btnMotes').onclick=function(){motesOn=!motesOn;this.classList.toggle('on',motesOn)};
-document.getElementById('btnReset').onclick=()=>{camera.position.set(1.9,1.35,2.2);controls.target.set(0,0.20,0);controls.autoRotate=true;btnAuto.classList.add('on')};
-addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
-
-const clock=new THREE.Clock();
-(function animate(){
-  requestAnimationFrame(animate);
-  const t=clock.getElapsedTime();controls.update();
-  if(motesOn){mMat.opacity=lerp(mMat.opacity,0.5,0.05);const p=motes.geometry.attributes.position.array;
-    for(let i=0;i<MC;i++){p[i*3+1]+=Math.sin(t*0.4+mPh[i])*0.0003;p[i*3]+=Math.cos(t*0.2+mPh[i])*0.00015;if(p[i*3+1]>2.2)p[i*3+1]=0.15}
-    motes.geometry.attributes.position.needsUpdate=true}else mMat.opacity=lerp(mMat.opacity,0,0.08);
-  key.intensity=1.25+Math.sin(t*0.5)*0.05;
-  if(spot.visible)spot.intensity=14+Math.sin(t*0.7)*1.5;
-  renderer.render(scene,camera);
+const clock = new THREE.Clock();
+(function tick() {
+  requestAnimationFrame(tick);
+  const t = clock.getElapsedTime();
+  if (autoRotate) pair.rotation.y += 0.0032;
+  if (motesOn) {
+    const p = moteGeo.attributes.position.array;
+    for (let i = 0; i < moteN; i++) {
+      p[i * 3 + 1] += Math.sin(t * 0.4 + i) * 0.0004;
+      if (p[i * 3 + 1] > 1.9) p[i * 3 + 1] = 0.15;
+    }
+    moteGeo.attributes.position.needsUpdate = true;
+  }
+  controls.update();
+  renderer.render(scene, camera);
 })();
-const delay=new URLSearchParams(location.search).has('shot')?40:700;
-setTimeout(()=>{loaderEl.classList.add('hide');hud.classList.add('show');setTimeout(()=>hint.classList.add('fade'),4500)},delay);
 </script>
 </body>
 </html>
