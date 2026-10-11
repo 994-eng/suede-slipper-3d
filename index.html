@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<link rel="icon" href="favicon.png" type="image/png" />
+<title>焦糖毛毛拖 · 3D</title>
+<style>
+  :root { --cream:#f4efe6; --gold:#c4a574; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:#1a1512;
+    font-family:"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--cream);-webkit-font-smoothing:antialiased}
+  #app{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%;touch-action:none}
+  #loader{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 40%,#3a2a22 0%,#1a1512 70%);
+    transition:opacity .9s ease,visibility .9s}
+  #loader.hide{opacity:0;visibility:hidden;pointer-events:none}
+  .loader-mark{width:56px;height:56px;border-radius:50%;border:2px solid rgba(196,165,116,.25);border-top-color:var(--gold);
+    animation:spin .9s linear infinite;margin-bottom:22px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loader-title{font-size:22px;letter-spacing:.28em;margin-bottom:8px}
+  .loader-sub{font-size:12px;letter-spacing:.18em;color:rgba(244,239,230,.45)}
+  #hud{position:fixed;inset:0;z-index:20;pointer-events:none;opacity:0;transition:opacity 1.2s ease .2s}
+  #hud.show{opacity:1}
+  .top-bar{position:absolute;top:0;left:0;right:0;padding:28px 32px 0;display:flex;justify-content:space-between;align-items:flex-start}
+  .brand h1{font-size:clamp(18px,2.4vw,26px);font-weight:500;letter-spacing:.22em;text-shadow:0 2px 24px rgba(0,0,0,.35)}
+  .brand p{margin-top:6px;font-size:11px;letter-spacing:.32em;color:rgba(244,239,230,.5)}
+  .controls{pointer-events:auto;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .btn{appearance:none;border:1px solid rgba(196,165,116,.35);background:rgba(26,21,18,.55);backdrop-filter:blur(12px);
+    -webkit-backdrop-filter:blur(12px);color:var(--cream);font-size:12px;letter-spacing:.12em;padding:10px 14px;border-radius:999px;
+    cursor:pointer;transition:all .25s ease;font-family:inherit}
+  .btn:hover{border-color:var(--gold);background:rgba(92,61,46,.45)}
+  .btn.on{background:rgba(196,165,116,.22);border-color:var(--gold);color:#f0e0c8}
+  .hint{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:12px;letter-spacing:.28em;
+    color:rgba(244,239,230,.55);white-space:nowrap;text-shadow:0 2px 16px rgba(0,0,0,.4);transition:opacity .6s}
+  .hint.fade{opacity:0}
+  .badge{position:absolute;bottom:28px;left:32px;font-size:10px;letter-spacing:.2em;color:rgba(244,239,230,.35)}
+  @media(max-width:640px){
+    .top-bar{padding:18px 16px 0;flex-direction:column;gap:14px}
+    .controls{width:100%;justify-content:flex-start}
+    .hint{bottom:18px;letter-spacing:.16em;font-size:11px}
+    .badge{display:none}
+  }
+</style>
+</head>
+<body>
+  <div id="loader">
+    <div class="loader-mark"></div>
+    <div class="loader-title">焦糖毛毛拖</div>
+    <div class="loader-sub">正在缝制绒面与毛领…</div>
+  </div>
+  <div id="app"></div>
+  <div id="hud">
+    <div class="top-bar">
+      <div class="brand">
+        <h1>焦糖毛毛拖</h1>
+        <p>Caramel Shearling Clog</p>
+      </div>
+      <div class="controls">
+        <button class="btn on" id="btnAuto" type="button">自动旋转</button>
+        <button class="btn on" id="btnSpot" type="button">柔光灯</button>
+        <button class="btn" id="btnMotes" type="button">尘埃微光</button>
+        <button class="btn" id="btnReset" type="button">复位视角</button>
+      </div>
+    </div>
+    <div class="hint" id="hint">拖动旋转 · 滚轮缩放 · 双指捏合</div>
+    <div class="badge">BTBC · STUDIO PREVIEW</div>
+  </div>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const TAU = Math.PI * 2;
+const deg = d => d * Math.PI / 180;
+const clamp = THREE.MathUtils.clamp;
+const lerp = THREE.MathUtils.lerp;
+
+function makeCanvas(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+function noise2(x, y) {
+  const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function fbm(x, y, oct = 4) {
+  let v = 0, a = 0.5, f = 1;
+  for (let i = 0; i < oct; i++) { v += a * noise2(x * f, y * f); f *= 2; a *= 0.5; }
+  return v;
+}
+
+function createSuedeTexture() {
+  return makeCanvas(1024, 1024, (ctx, w, h) => {
+    const img = ctx.createImageData(w, h);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const n = fbm(x * 0.016, y * 0.016, 5);
+        const n2 = fbm(x * 0.055 + 20, y * 0.055, 3);
+        const nap = n * 0.72 + n2 * 0.28;
+        const i = (y * w + x) * 4;
+        d[i]     = clamp(68 + nap * 42 + (noise2(x, y) - 0.5) * 12, 0, 255);
+        d[i + 1] = clamp(40 + nap * 24 + (noise2(x + 3, y) - 0.5) * 8, 0, 255);
+        d[i + 2] = clamp(28 + nap * 16 + (noise2(x, y + 7) - 0.5) * 6, 0, 255);
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    ctx.globalAlpha = 0.07;
+    for (let i = 0; i < 90; i++) {
+      const y0 = Math.random() * h;
+      ctx.strokeStyle = Math.random() > 0.5 ? '#3a2418' : '#8a6048';
+      ctx.lineWidth = 1 + Math.random() * 2;
+      ctx.beginPath();
+      ctx.moveTo(0, y0);
+      for (let x = 0; x < w; x += 8) ctx.lineTo(x, y0 + Math.sin(x * 0.02 + i) * 3);
+      ctx.stroke();
+    }
+  });
+}
+function createSuedeRough() {
+  return makeCanvas(512, 512, (ctx, w, h) => {
+    const img = ctx.createImageData(w, h);
+    const d = img.data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = 150 + fbm(x * 0.04, y * 0.04, 4) * 85;
+      const i = (y * w + x) * 4;
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+}
+function createFurTexture() {
+  return makeCanvas(512, 512, (ctx, w, h) => {
+    ctx.fillStyle = '#f3ebe0';
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 16000; i++) {
+      const x = Math.random() * w, y = Math.random() * h;
+      const len = 5 + Math.random() * 16;
+      const ang = -0.5 + Math.random();
+      const shade = 198 + Math.floor(Math.random() * 50);
+      ctx.strokeStyle = `rgba(${shade},${shade - 6},${shade - 18},${0.12 + Math.random() * 0.4})`;
+      ctx.lineWidth = 0.5 + Math.random();
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.sin(ang) * len, y - Math.cos(ang) * len);
+      ctx.stroke();
+    }
+  });
+}
+function createFurAlpha() {
+  return makeCanvas(256, 256, (ctx, w, h) => {
+    const g = ctx.createRadialGradient(w / 2, h * 0.62, 1, w / 2, h * 0.35, w * 0.48);
+    g.addColorStop(0, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.4, 'rgba(255,255,255,0.55)');
+    g.addColorStop(0.75, 'rgba(255,255,255,0.12)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+function createWoodTexture() {
+  return makeCanvas(1024, 512, (ctx, w, h) => {
+    const img = ctx.createImageData(w, h);
+    const d = img.data;
+    for (let y = 0; y < h; y++) {
+      const plank = Math.floor(y / 64);
+      for (let x = 0; x < w; x++) {
+        const grain = Math.sin((x + plank * 40) * 0.035 + fbm(x * 0.01, y * 0.08) * 8);
+        const n = fbm(x * 0.02, y * 0.05 + plank, 4);
+        const base = 200 + n * 26 + grain * 9;
+        const i = (y * w + x) * 4;
+        let r = base, g = base * 0.88, b = base * 0.68;
+        if (y % 64 < 1.5) { r *= 0.78; g *= 0.78; b *= 0.78; }
+        d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+}
+function createEnvMap(renderer) {
+  const sc = new THREE.Scene();
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    vertexShader: `varying vec3 vW; void main(){ vW=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `
+      varying vec3 vW;
+      void main(){
+        float h = vW.y * 0.5 + 0.5;
+        vec3 top = vec3(0.96,0.91,0.84);
+        vec3 mid = vec3(0.70,0.58,0.46);
+        vec3 bot = vec3(0.26,0.20,0.16);
+        vec3 col = mix(bot, mid, smoothstep(0.0,0.45,h));
+        col = mix(col, top, smoothstep(0.45,1.0,h));
+        float win = pow(max(0.0, dot(normalize(vW), normalize(vec3(0.45,0.4,0.75)))), 14.0);
+        col += vec3(1.0,0.93,0.8) * win * 0.6;
+        gl_FragColor = vec4(col,1.0);
+      }`
+  });
+  sc.add(new THREE.Mesh(new THREE.SphereGeometry(40, 32, 16), mat));
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const rt = pmrem.fromScene(sc, 0.04);
+  pmrem.dispose();
+  return rt.texture;
+}
+
+/* ---- clog parametric profile ----
+   t in [0,1]: 0=heel, 1=toe
+   returns half-width, upper height, sole half-width
+*/
+function profile(t) {
+  // Width: narrow heel -> wide mid/fore -> round toe (chunky clog)
+  const belly = Math.sin(Math.PI * Math.pow(clamp(t * 1.02, 0, 1), 0.9));
+  let halfW = 0.145 + 0.125 * belly;
+  if (t < 0.12) halfW *= lerp(0.82, 1, t / 0.12);
+  if (t > 0.86) halfW *= lerp(1, 0.62, (t - 0.86) / 0.14);
+
+  // Height: closed heel + very rounded bread toe
+  let H = 0.22 + 0.09 * Math.sin(Math.PI * t);
+  if (t < 0.3) H = Math.max(H, lerp(0.38, 0.24, t / 0.3));
+  if (t > 0.48) H += Math.pow((t - 0.48) / 0.52, 1.1) * 0.20;
+  if (t > 0.92) H *= lerp(1, 0.92, (t - 0.92) / 0.08);
+
+  // Deep U opening like the product photos
+  let open = 0;
+  if (t > 0.14 && t < 0.8) {
+    const s = Math.sin(Math.PI * ((t - 0.14) / (0.8 - 0.14)));
+    open = 0.62 + s * 0.95;
+  }
+  return { halfW, H, open };
+}
+
+const SHOE_LEN = 1.08;
+const SOLE_Y = 0.016;
+
+/** Build open-top clog shell. inset>0 = smaller lining. flipNormals for lining facing inward. */
+function buildShellGeometry(inset, flipNormals) {
+  const segsL = 56;
+  const segsA = 40;
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  const rimL = [];
+  const rimR = [];
+
+  // rings[i] = array of vertex indices for length slice i
+  const rings = [];
+
+  for (let i = 0; i <= segsL; i++) {
+    const t = i / segsL;
+    const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+    let { halfW, H, open } = profile(t);
+    halfW = Math.max(0.03, halfW - inset);
+    H = Math.max(0.05, H - inset * 1.2);
+
+    // Arc from +open (right rim) going around bottom to -open+TAU (left rim)
+    // phi=0 at top (+Y). Keep the long way around.
+    const span = TAU - 2 * Math.max(open, 0.02);
+    const ring = [];
+
+    for (let j = 0; j <= segsA; j++) {
+      const f = j / segsA;
+      const phi = open + f * span;
+
+      // ellipse: x = sin(phi)*W, y_raw = cos(phi)*H  (phi=0 → top)
+      let ca = Math.sin(phi);
+      let sa = Math.cos(phi);
+
+      // Flatten bottom for sole seating
+      if (sa < -0.05) {
+        const k = (sa + 0.05) / 0.95;
+        sa = -0.05 + k * 0.08;
+      }
+
+      // Subtle toe center crease
+      let x = ca * halfW;
+      if (t > 0.6 && Math.abs(ca) < 0.18 && sa > 0.3) x *= 0.96;
+
+      let y = SOLE_Y + inset * 0.5 + (sa + 1) * 0.5 * H + 0.002;
+      // Keep bottom near sole
+      const bottomY = SOLE_Y + 0.002 + inset * 0.3;
+      if (y < bottomY) y = bottomY;
+
+      // Pull toe forward into bread sphere
+      let zz = z;
+      if (t > 0.82) {
+        const ft = (t - 0.82) / 0.18;
+        zz += ft * ft * 0.03;
+        y += Math.sin(ft * Math.PI) * 0.02 * Math.max(0, sa);
+      }
+      // Round heel back
+      if (t < 0.12) {
+        const fh = 1 - t / 0.12;
+        zz -= fh * fh * 0.025;
+      }
+
+      const idx = positions.length / 3;
+      positions.push(x, y, zz);
+      uvs.push(t * 2.4, f * 1.6);
+      ring.push(idx);
+
+      if (j === 0) rimR.push({ x, y, z: zz, t, idx });
+      if (j === segsA) rimL.push({ x, y, z: zz, t, idx });
+    }
+    rings.push(ring);
+  }
+
+  // Stitch consecutive rings
+  for (let i = 0; i < segsL; i++) {
+    const a = rings[i], b = rings[i + 1];
+    for (let j = 0; j < segsA; j++) {
+      const a0 = a[j], a1 = a[j + 1], b0 = b[j], b1 = b[j + 1];
+      if (!flipNormals) {
+        indices.push(a0, a1, b1, a0, b1, b0);
+      } else {
+        indices.push(a0, b1, a1, a0, b0, b1);
+      }
+    }
+  }
+
+  // Cap heel & toe when opening is closed
+  function cap(ring, outward) {
+    let cx = 0, cy = 0, cz = 0;
+    for (const id of ring) {
+      cx += positions[id * 3];
+      cy += positions[id * 3 + 1];
+      cz += positions[id * 3 + 2];
+    }
+    const n = ring.length;
+    cx /= n; cy /= n; cz /= n;
+    cz += outward * 0.015;
+    cy += 0.01;
+    const ci = positions.length / 3;
+    positions.push(cx, cy, cz);
+    uvs.push(outward < 0 ? 0 : 1, 0.5);
+    for (let j = 0; j < n - 1; j++) {
+      if (!flipNormals) {
+        if (outward < 0) indices.push(ci, ring[j + 1], ring[j]);
+        else indices.push(ci, ring[j], ring[j + 1]);
+      } else {
+        if (outward < 0) indices.push(ci, ring[j], ring[j + 1]);
+        else indices.push(ci, ring[j + 1], ring[j]);
+      }
+    }
+  }
+  cap(rings[0], -1);
+  cap(rings[rings.length - 1], 1);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return { geo, rimL, rimR };
+}
+
+function mirrorX(geo) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setX(i, -pos.getX(i));
+  // flip winding
+  const idx = geo.index.array;
+  for (let i = 0; i < idx.length; i += 3) {
+    const tmp = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = tmp;
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function buildFur(rimL, rimR, mats, isLeft) {
+  const g = new THREE.Group();
+  const openL = rimL.filter(p => p.t > 0.16 && p.t < 0.78);
+  const openR = rimR.filter(p => p.t > 0.16 && p.t < 0.78);
+  if (openL.length < 2) return g;
+
+  const sign = isLeft ? -1 : 1;
+
+  function tuft(p, toward, scale) {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.048 * scale, 0.078 * scale),
+      Math.random() > 0.45 ? mats.fur : mats.furSoft
+    );
+    m.position.set(p.x + toward.x * 0.01, p.y + 0.012 + toward.y * 0.01, p.z);
+    m.lookAt(m.position.x + toward.x, m.position.y + toward.y + 0.4, m.position.z + toward.z);
+    m.rotateZ((Math.random() - 0.5) * 0.8);
+    m.rotateX(-0.4 + Math.random() * 0.3);
+    m.renderOrder = 3;
+    g.add(m);
+  }
+
+  for (let i = 0; i < openR.length; i++) {
+    const pr = openR[i], pl = openL[i] || openL[openL.length - 1];
+    tuft(pr, new THREE.Vector3(sign * 0.4, 0.9, 0), 1.0 + Math.random() * 0.4);
+    tuft(pl, new THREE.Vector3(-sign * 0.4, 0.9, 0), 1.0 + Math.random() * 0.4);
+    if (i % 2 === 0) {
+      tuft({ x: pr.x, y: pr.y + 0.01, z: pr.z }, new THREE.Vector3(sign * 0.2, 1, 0), 0.75);
+      tuft({ x: pl.x, y: pl.y + 0.01, z: pl.z }, new THREE.Vector3(-sign * 0.2, 1, 0), 0.75);
+    }
+    if (pr.t > 0.38 && pr.t < 0.78) {
+      const mid = { x: (pr.x + pl.x) * 0.5, y: (pr.y + pl.y) * 0.5 + 0.02, z: (pr.z + pl.z) * 0.5 + 0.012 };
+      tuft(mid, new THREE.Vector3(0, 1, 0.35), 1.25);
+      tuft({ x: mid.x + (Math.random() - 0.5) * 0.06, y: mid.y + 0.005, z: mid.z }, new THREE.Vector3(0, 1, 0.15), 1.0);
+      if (Math.random() > 0.35) {
+        tuft({ x: mid.x + (Math.random() - 0.5) * 0.08, y: mid.y, z: mid.z - 0.01 }, new THREE.Vector3(0, 1, 0.1), 0.85);
+      }
+    }
+  }
+
+  // Soft volume tubes along collar
+  const ptsR = openR.map(p => new THREE.Vector3(p.x, p.y + 0.01, p.z));
+  const ptsL = openL.map(p => new THREE.Vector3(p.x, p.y + 0.01, p.z));
+  const front = [];
+  const a = ptsR[ptsR.length - 1], b = ptsL[ptsL.length - 1];
+  for (let k = 0; k <= 10; k++) {
+    const f = k / 10;
+    const p = a.clone().lerp(b, f);
+    p.y += Math.sin(f * Math.PI) * 0.018 + 0.008;
+    p.z += 0.012;
+    front.push(p);
+  }
+  const loop = [...ptsR, ...front, ...ptsL.slice().reverse()];
+  try {
+    const curve = new THREE.CatmullRomCurve3(loop, false, 'catmullrom', 0.35);
+    const t1 = new THREE.Mesh(new THREE.TubeGeometry(curve, 160, 0.02, 8, false), mats.furShell);
+    t1.renderOrder = 2; g.add(t1);
+    const t2 = new THREE.Mesh(new THREE.TubeGeometry(curve, 140, 0.034, 8, false), mats.furShellOuter);
+    t2.renderOrder = 1; g.add(t2);
+  } catch (_) {}
+
+  return g;
+}
+
+function buildSeam(isLeft, mat) {
+  const pts = [];
+  for (let i = 0; i <= 22; i++) {
+    const t = 0.58 + (i / 22) * 0.4;
+    const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+    const { H } = profile(t);
+    const y = SOLE_Y + H * 0.98 + 0.008;
+    pts.push(new THREE.Vector3(0, y, z + (t > 0.82 ? ((t - 0.82) / 0.18) ** 2 * 0.03 : 0)));
+  }
+  return new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 28, 0.0032, 5, false), mat);
+}
+
+function buildStitches(isLeft, mat) {
+  const g = new THREE.Group();
+  const offs = [0.05, 0.078];
+  for (const ox of offs) {
+    const pts = [];
+    for (let i = 0; i <= 14; i++) {
+      const t = 0.4 + (i / 14) * 0.26;
+      const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+      const { halfW, H } = profile(t);
+      const y = SOLE_Y + H * 0.72;
+      const x = (isLeft ? -1 : 1) * ox * (halfW / 0.22);
+      pts.push(new THREE.Vector3(x, y + 0.004, z));
+    }
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 18, 0.0016, 4, false), mat));
+  }
+  return g;
+}
+
+function buildStrap(isLeft, mats) {
+  const g = new THREE.Group();
+  const side = isLeft ? -1 : 1;
+  const path = [];
+  for (let i = 0; i <= 22; i++) {
+    const f = i / 22;
+    // sweep from outer side, over vamp, to inner
+    const ang = lerp(side * 1.4, -side * 1.0, f);
+    const t = 0.40 + Math.sin(f * Math.PI) * 0.06 + f * 0.05;
+    const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+    const { halfW, H } = profile(t);
+    const ca = Math.sin(ang), sa = Math.cos(ang);
+    const x = ca * halfW * 1.05;
+    const y = SOLE_Y + (sa + 1) * 0.5 * H * 0.95 + 0.018;
+    path.push(new THREE.Vector3(x, y, z));
+  }
+  const curve = new THREE.CatmullRomCurve3(path);
+  const shape = new THREE.Shape();
+  const hw = 0.058;
+  shape.moveTo(-hw, -0.0035); shape.lineTo(hw, -0.0035);
+  shape.lineTo(hw, 0.0035); shape.lineTo(-hw, 0.0035); shape.closePath();
+  const strap = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { steps: 48, bevelEnabled: false, extrudePath: curve }), mats.suedeStrap);
+  strap.castShadow = true;
+  g.add(strap);
+
+  // Buckle on outer flank
+  const bt = 0.42;
+  const { halfW, H } = profile(bt);
+  const bz = -SHOE_LEN * 0.5 + bt * SHOE_LEN;
+  const buckle = new THREE.Group();
+  const frame = new THREE.Mesh(new RoundedBoxGeometry(0.046, 0.032, 0.007, 2, 0.003), mats.brass);
+  buckle.add(frame);
+  const hole = new THREE.Mesh(new RoundedBoxGeometry(0.026, 0.015, 0.008, 1, 0.002), mats.brassDark);
+  hole.position.z = 0.001; buckle.add(hole);
+  const prong = new THREE.Mesh(new RoundedBoxGeometry(0.0035, 0.02, 0.005, 1, 0.001), mats.brass);
+  prong.position.set(0.005, 0, 0.004); buckle.add(prong);
+  const tip = new THREE.Mesh(new RoundedBoxGeometry(0.03, 0.02, 0.0045, 2, 0.005), mats.suedeStrap);
+  tip.position.set(side * 0.028, -0.002, -0.002); buckle.add(tip);
+
+  buckle.position.set(side * halfW * 1.02, SOLE_Y + H * 0.42, bz);
+  buckle.rotation.y = side > 0 ? deg(-65) : deg(65);
+  buckle.rotation.z = side > 0 ? deg(-10) : deg(10);
+  buckle.rotation.x = deg(6);
+  g.add(buckle);
+  return g;
+}
+
+function buildSole(isLeft, mat) {
+  const g = new THREE.Group();
+  // Build a thin sole as a flat BufferGeometry footprint with slight thickness via two plates + edge
+  const N = 64;
+  const topY = 0.015, botY = 0.001;
+  const positions = [], indices = [], uvs = [];
+  // top ring + bottom ring + centers
+  for (let layer = 0; layer < 2; layer++) {
+    const y = layer === 0 ? botY : topY;
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * TAU;
+      // map angle to perimeter of shoe footprint
+      // use parametric t along length and side
+      // simpler: ellipse-ish from profile samples
+    }
+  }
+  // Sample outline
+  const outline = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+    const { halfW } = profile(t);
+    outline.push([-(halfW * 1.08 + 0.012), z]);
+  }
+  for (let i = N; i >= 0; i--) {
+    const t = i / N;
+    const z = -SHOE_LEN * 0.5 + t * SHOE_LEN;
+    const { halfW } = profile(t);
+    outline.push([ (halfW * 1.08 + 0.012), z]);
+  }
+  const M = outline.length;
+  // bottom verts 0..M-1, top verts M..2M-1
+  for (const [x, z] of outline) { positions.push(x, botY, z); uvs.push(0, 0); }
+  for (const [x, z] of outline) { positions.push(x, topY, z); uvs.push(0, 1); }
+  // side quads
+  for (let i = 0; i < M - 1; i++) {
+    const a = i, b = i + 1, c = M + i + 1, d = M + i;
+    indices.push(a, b, c, a, c, d);
+  }
+  // close last to first already included since outline is closed-ish; ensure seam
+  // cap top and bottom with triangle fan from centroid
+  let cx = 0, cz = 0;
+  for (const [x, z] of outline) { cx += x; cz += z; }
+  cx /= M; cz /= M;
+  const botC = positions.length / 3;
+  positions.push(cx, botY, cz); uvs.push(0.5, 0.5);
+  const topC = positions.length / 3;
+  positions.push(cx, topY, cz); uvs.push(0.5, 0.5);
+  for (let i = 0; i < M - 1; i++) {
+    indices.push(botC, i + 1, i);
+    indices.push(topC, M + i, M + i + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  g.add(mesh);
+  return g;
+}
+
+function createShoe(isLeft, mats) {
+  const group = new THREE.Group();
+
+  // flipNormals=true for OUTER so FrontSide faces outward (arc winds around bottom)
+  const outer = buildShellGeometry(0, true);
+  let oGeo = outer.geo;
+  let rimL = outer.rimL, rimR = outer.rimR;
+  if (isLeft) {
+    oGeo = mirrorX(oGeo.clone());
+    rimL = outer.rimR.map(p => ({ ...p, x: -p.x }));
+    rimR = outer.rimL.map(p => ({ ...p, x: -p.x }));
+  }
+  const outerMesh = new THREE.Mesh(oGeo, mats.suede);
+  outerMesh.castShadow = true;
+  outerMesh.receiveShadow = true;
+  group.add(outerMesh);
+
+  const inner = buildShellGeometry(0.014, false);
+  let iGeo = inner.geo;
+  if (isLeft) iGeo = mirrorX(iGeo.clone());
+  const innerMesh = new THREE.Mesh(iGeo, mats.lining);
+  group.add(innerMesh);
+
+  group.add(buildFur(rimL, rimR, mats, isLeft));
+  group.add(buildSeam(isLeft, mats.seam));
+  group.add(buildStitches(isLeft, mats.stitch));
+  group.add(buildStrap(isLeft, mats));
+  group.add(buildSole(isLeft, mats.sole));
+
+  if (isLeft) {
+    const tag = new THREE.Mesh(new RoundedBoxGeometry(0.032, 0.02, 0.0012, 1, 0.002), mats.tag);
+    tag.position.set(-0.015, 0.30, 0.0);
+    tag.rotation.set(deg(-8), 0, deg(-20));
+    group.add(tag);
+  }
+  return group;
+}
+
+/* ===== scene ===== */
+const app = document.getElementById('app');
+const loaderEl = document.getElementById('loader');
+const hud = document.getElementById('hud');
+const hint = document.getElementById('hint');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.02;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#1e1814');
+scene.fog = new THREE.FogExp2('#1e1814', 0.042);
+
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.05, 40);
+camera.position.set(1.9, 1.4, 2.5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 1.15;
+controls.maxDistance = 5.5;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.target.set(0, 0.24, 0);
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+controls.addEventListener('start', () => {
+  controls.autoRotate = false;
+  document.getElementById('btnAuto').classList.remove('on');
+  hint.classList.add('fade');
+});
+
+scene.environment = createEnvMap(renderer);
+
+scene.add(new THREE.AmbientLight(0xfff0e0, 0.32));
+scene.add(new THREE.HemisphereLight(0xfff5e8, 0x3a2a20, 0.5));
+
+const key = new THREE.DirectionalLight(0xffe6c8, 1.4);
+key.position.set(3.2, 5.2, 2.8);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 18;
+key.shadow.camera.left = -3.5; key.shadow.camera.right = 3.5;
+key.shadow.camera.top = 3.5; key.shadow.camera.bottom = -3.5;
+key.shadow.bias = -0.0002; key.shadow.normalBias = 0.02;
+scene.add(key);
+
+const fill = new THREE.DirectionalLight(0xc8d8ff, 0.32);
+fill.position.set(-3, 2, -2);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffd5a0, 0.4);
+rim.position.set(-1.2, 2.8, 3.5);
+scene.add(rim);
+
+const spot = new THREE.SpotLight(0xfff2dc, 14, 14, deg(26), 0.55, 1.1);
+spot.position.set(1.1, 4.0, 1.6);
+spot.target.position.set(0, 0.18, 0);
+spot.castShadow = true;
+scene.add(spot); scene.add(spot.target);
+
+const bounce = new THREE.PointLight(0xffe8c8, 2.2, 5, 2);
+bounce.position.set(0, 0.2, 0);
+scene.add(bounce);
+
+/* materials */
+const suedeMap = createSuedeTexture();
+suedeMap.wrapS = suedeMap.wrapT = THREE.RepeatWrapping;
+const suedeRough = createSuedeRough();
+suedeRough.wrapS = suedeRough.wrapT = THREE.RepeatWrapping;
+const furMap = createFurTexture();
+const furAlpha = createFurAlpha();
+const woodMap = createWoodTexture();
+woodMap.wrapS = woodMap.wrapT = THREE.RepeatWrapping;
+woodMap.repeat.set(2.8, 2.8);
+
+const mats = {
+  suede: new THREE.MeshStandardMaterial({
+    map: suedeMap, roughnessMap: suedeRough, roughness: 0.97, metalness: 0.0,
+    envMapIntensity: 0.12, color: new THREE.Color('#5c3828'), side: THREE.FrontSide
+  }),
+  suedeStrap: new THREE.MeshStandardMaterial({
+    map: suedeMap, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.18, color: new THREE.Color('#5a382a')
+  }),
+  lining: new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#efe6d8'), roughness: 0.96, metalness: 0, envMapIntensity: 0.08, side: THREE.FrontSide
+  }),
+  fur: new THREE.MeshStandardMaterial({
+    map: furMap, alphaMap: furAlpha, transparent: true, depthWrite: false, roughness: 1, metalness: 0,
+    side: THREE.DoubleSide, color: new THREE.Color('#f3ebe1')
+  }),
+  furSoft: new THREE.MeshStandardMaterial({
+    map: furMap, alphaMap: furAlpha, transparent: true, opacity: 0.82, depthWrite: false, roughness: 1,
+    side: THREE.DoubleSide, color: new THREE.Color('#f7f1e8')
+  }),
+  furShell: new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#f4ece2'), roughness: 1, transparent: true, opacity: 0.85, depthWrite: false
+  }),
+  furShellOuter: new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#faf6f0'), roughness: 1, transparent: true, opacity: 0.4, depthWrite: false
+  }),
+  sole: new THREE.MeshStandardMaterial({ color: new THREE.Color('#0c0c0c'), roughness: 0.62, metalness: 0.12 }),
+  brass: new THREE.MeshStandardMaterial({ color: new THREE.Color('#b8924a'), roughness: 0.36, metalness: 0.92, envMapIntensity: 1.15 }),
+  brassDark: new THREE.MeshStandardMaterial({ color: new THREE.Color('#6a5228'), roughness: 0.55, metalness: 0.85 }),
+  seam: new THREE.MeshStandardMaterial({ color: new THREE.Color('#4a3024'), roughness: 0.95 }),
+  stitch: new THREE.MeshStandardMaterial({ color: new THREE.Color('#3d281e'), roughness: 1 }),
+  tag: new THREE.MeshStandardMaterial({ color: new THREE.Color('#f5f5f0'), roughness: 0.7 })
+};
+
+const floor = new THREE.Mesh(
+  new THREE.PlaneGeometry(14, 14),
+  new THREE.MeshStandardMaterial({ map: woodMap, roughness: 0.78, metalness: 0.02, envMapIntensity: 0.28 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+const shadowCanvas = document.createElement('canvas');
+shadowCanvas.width = 256; shadowCanvas.height = 256;
+{
+  const ctx = shadowCanvas.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 18, 128, 128, 118);
+  g.addColorStop(0, 'rgba(0,0,0,0.42)');
+  g.addColorStop(0.45, 'rgba(0,0,0,0.16)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+}
+const shadowTex = new THREE.CanvasTexture(shadowCanvas);
+function addShadow(x, z, sx, sz) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.85 })
+  );
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.012, z);
+  m.scale.set(sx, sz, 1);
+  scene.add(m);
+}
+
+const pair = new THREE.Group();
+const left = createShoe(true, mats);
+left.position.set(-0.34, 0, 0.06);
+left.rotation.y = deg(16);
+pair.add(left);
+
+const right = createShoe(false, mats);
+right.position.set(0.34, 0, -0.02);
+right.rotation.y = deg(-12);
+pair.add(right);
+scene.add(pair);
+addShadow(-0.34, 0.06, 0.9, 1.4);
+addShadow(0.34, -0.02, 0.9, 1.4);
+
+/* motes */
+const moteCount = 160;
+const motePos = new Float32Array(moteCount * 3);
+const motePhase = new Float32Array(moteCount);
+for (let i = 0; i < moteCount; i++) {
+  motePos[i * 3] = (Math.random() - 0.5) * 4;
+  motePos[i * 3 + 1] = 0.2 + Math.random() * 2.2;
+  motePos[i * 3 + 2] = (Math.random() - 0.5) * 4;
+  motePhase[i] = Math.random() * TAU;
+}
+const moteGeo = new THREE.BufferGeometry();
+moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+const moteMat = new THREE.PointsMaterial({
+  color: 0xffe6c0, size: 0.016, transparent: true, opacity: 0, depthWrite: false,
+  sizeAttenuation: true, blending: THREE.AdditiveBlending
+});
+const motes = new THREE.Points(moteGeo, moteMat);
+scene.add(motes);
+let motesOn = false;
+
+const btnAuto = document.getElementById('btnAuto');
+btnAuto.onclick = () => {
+  controls.autoRotate = !controls.autoRotate;
+  btnAuto.classList.toggle('on', controls.autoRotate);
+};
+document.getElementById('btnSpot').onclick = function () {
+  spot.visible = !spot.visible;
+  this.classList.toggle('on', spot.visible);
+};
+document.getElementById('btnMotes').onclick = function () {
+  motesOn = !motesOn;
+  this.classList.toggle('on', motesOn);
+};
+document.getElementById('btnReset').onclick = () => {
+  camera.position.set(1.9, 1.4, 2.5);
+  controls.target.set(0, 0.24, 0);
+  controls.autoRotate = true;
+  btnAuto.classList.add('on');
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock();
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  controls.update();
+  if (motesOn) {
+    moteMat.opacity = lerp(moteMat.opacity, 0.55, 0.05);
+    const pos = motes.geometry.attributes.position.array;
+    for (let i = 0; i < moteCount; i++) {
+      pos[i * 3 + 1] += Math.sin(t * 0.4 + motePhase[i]) * 0.00035;
+      pos[i * 3] += Math.cos(t * 0.25 + motePhase[i]) * 0.0002;
+      if (pos[i * 3 + 1] > 2.5) pos[i * 3 + 1] = 0.15;
+    }
+    motes.geometry.attributes.position.needsUpdate = true;
+  } else moteMat.opacity = lerp(moteMat.opacity, 0, 0.08);
+  key.intensity = 1.28 + Math.sin(t * 0.5) * 0.08;
+  if (spot.visible) spot.intensity = 12 + Math.sin(t * 0.7) * 1.2;
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(() => {
+  animate();
+  const params = new URLSearchParams(location.search);
+  const delay = params.has('shot') ? 50 : 850;
+  window.addEventListener('error', e => { console.error('WINERR', e.message, e.filename, e.lineno); });
+  window.addEventListener('unhandledrejection', e => { console.error('REJ', e.reason); });
+  setTimeout(() => {
+    loaderEl.classList.add('hide');
+    hud.classList.add('show');
+    setTimeout(() => hint.classList.add('fade'), 5200);
+  }, delay);
+});
+</script>
+</body>
+</html>
